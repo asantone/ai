@@ -1,0 +1,21 @@
+account_id,company_name,domain,employee_count,is_current_customer,target_workload
+ACC001,Echo Corp,echocorp.io,450,False,Data Pipeline Scaling
+ACC002,Delta Solutions,deltasols.com,1200,True,Automated Compliance
+ACC003,Omega Health,omegahealth.com,180,False,Legacy Infrastructure Migration
+ACC004,Apex Financial,apexfin.com,3500,True,Real-Time Fraud Ingestion
+ACC005,Nova Logistics,novalogistics.com,620,False,Supply Chain Event Streaming
+ACC006,Stratum Security,stratumsec.io,140,False,Zero-Trust Log Aggregation
+ACC007,Quantum Bio,quantumbio.com,95,False,Bioinformatic Parallel Compute
+ACC008,Vanguard Retail,vanguardretail.com,8500,True,Omnichannel Inventory Sync
+ACC009,Beacon Media,beaconmedia.co,410,False,Dynamic Content Caching
+ACC010,Summit Energy,summitenergy.com,1500,False,Grid Telemetry Ingestion
+ACC011,Horizon SaaS,horizonsaas.io,220,False,Multi-Tenant Database Scaling
+ACC012,Pinnacle Insurance,pinnacleins.com,4100,True,Claims Processing Pipeline
+ACC013,Vertex Robotics,vertexrobotics.ai,310,False,Edge Device Telemetry
+ACC014,Helix Pharma,helixpharma.com,1100,False,Clinical Trial Data Auditing
+ACC015,Solas Solar,solassolar.io,75,False,IoT Asset Monitoring
+ACC016,Gridiron Media,gridironmedia.com,950,True,Live Video Metadata Processing
+ACC017,Element Materials,elementmat.com,530,False,R&D Laboratory Information Management
+ACC018,Zion E-Commerce,zionecom.com,1800,False,Cart Abandonment Event Streaming
+ACC019,Aero Aerospace,aeroaerospace.ai,240,False,Flight Telemetry Modeling
+ACC020,Titan Telco,titantelco.net,12000,True,Network Fault Isolation
