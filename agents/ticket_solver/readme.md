@@ -19,8 +19,8 @@ MASR uses a coordinated multi-agent state machine topology. Instead of relying o
          ┌─────────┴─────────┐
          ▼                   ▼
   ┌─────────────┐     ┌─────────────┐
-  │  Technical  │     │   Billing   │ (Specialized Domain Sub-Agents)
-  │  RAG Agent  │     │  Sub-Agent  │
+  │  Technical  │     │  TBD        │ (Specialized Domain Sub-Agents)
+  │  RAG Agent  │     │  Sub-Agent* │
   └──────┬──────┘     └──────┬──────┘
          │                   │
          └─────────┬─────────┘
@@ -31,6 +31,8 @@ MASR uses a coordinated multi-agent state machine topology. Instead of relying o
                    │
                    ▼
        [Final Draft Email Output]
+
+* no sub-agents at this time
 
 ```
 
@@ -61,7 +63,7 @@ The bedrock of the application is a unified, stateful `TypedDict` memory layer. 
 
 * **Role:** Communicator & Writer
 * **Mechanism:** The final active node in the graph state machine. It consumes the cumulative internal state (the original ticket description concatenated with the structural diagnostic summaries produced by the sub-agents). It is prompted with strict guardrails to prevent hallucination.
-* **Output:** Structures a clear, professional, and empathetic response draft tailored to the user's issue, populating the `final_response` payload before reaching the termination endpoint (`END`).
+* **Output:** Structures a clear, professional, and empathetic response draft tailored to the user's issue, populating the `final_response` payload before reaching the termination endpoint (`END`). Output is a text file for simplicity.
 
 ---
 
@@ -70,7 +72,7 @@ The bedrock of the application is a unified, stateful `TypedDict` memory layer. 
 The workspace is split into two modules to separate application architecture from execution logic:
 
 * **`agent_graph.py`**: Defines the data models, state schema, agent nodes, prompt templates, and compiles the topological execution graph.
-* **`run_resolver.py`**: The ingestion endpoint. Imports the compiled graph framework, injects the mock or live ticket payloads, executes the workflow state machine, and prints the synthesized response.
+* **`run.py`**: The ingestion endpoint. Imports the compiled graph framework, injects the mock or live ticket payloads, executes the workflow state machine, and prints the synthesized response.
 
 ---
 
@@ -81,13 +83,7 @@ The workspace is split into two modules to separate application architecture fro
 1. **Ollama**: Install and run Ollama locally on your machine.
 2. **Local Model**: Pull the recommended model framework:
 ```bash
-
-```
-
-
-
 ollama pull llama3.1:8b
-
 ```
 
 ### Installation
@@ -104,6 +100,6 @@ pip install langchain-ollama langgraph
 To run a diagnostic triage simulation across the local multi-agent topology, execute the runner script from your terminal:
 
 ```bash
-python run_resolver.py
+python run.py
 
 ```
