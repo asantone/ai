@@ -1,0 +1,14 @@
+Here's a friendly email response to the customer:
+
+Subject: Re: 504 Timeout Error with API Requests
+
+Dear [Customer],
+
+Thank you for reaching out about the issues you're experiencing with your API requests dropping due to a 504 timeout error. I've investigated this issue and found that it's likely caused by an outdated client application build (version less than 2.4) attempting to access legacy platform endpoints.
+
+To resolve this, I recommend either upgrading your client application build to version 2.4 or later, or applying a configuration update as described in Document #442 (Option A: Configuration Update). If you're not sure which option is best for your setup, please let me know and I'll be happy to guide you through the process.
+
+If neither of these options work for you, I can escalate this ticket to our Infrastructure Operations team for further assistance. Please let me know how you'd like to proceed.
+
+Best regards,
+[Your Name]
