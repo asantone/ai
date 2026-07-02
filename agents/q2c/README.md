@@ -1,1 +1,189 @@
+# Q2C Policy Interceptor: Agentic Guardrails for High-Velocity Sales
 
+A LangGraph-based agent that sits in the Quote-to-Cash path and validates
+deal parameters against business policy in real time, before a rep ever
+opens a Deal Desk ticket.
+
+---
+
+## Design Philosophy
+
+Deal Desk friction is rarely caused by bad deals. It is caused by *late
+discovery* of policy violations: a rep builds a quote, submits it, waits
+on a queue, and only then learns the discount was 10 points over their
+authority. The Policy Interceptor moves that check to the point of
+authorship and returns a decision in milliseconds.
+
+Three architectural decisions drive that outcome:
+
+**1. Decoupled, single-responsibility nodes.**
+`policy_checker` only compares numbers against `POLICY_CONFIG`. It knows
+nothing about phrasing. `guidance_generator` only writes the human-facing
+"Next Best Action." It knows nothing about thresholds. This separation
+means Sales Ops can update discount ceilings without redeploying prompt
+logic, and Enablement can rewrite guidance copy without touching a single
+business rule. In a fast-moving GTM org, the policy changes weekly. The
+architecture should not have to.
+
+**2. State as the single source of truth.**
+Every node reads and writes the same `DealState` `TypedDict`. There is no
+hidden side-channel data. This makes the graph trivially testable (feed
+in a state, assert on the state that comes out) and makes the eventual
+move to LangGraph's checkpointing/persistence layer, for multi-turn
+negotiation flows, a non-event, since the state shape is already explicit
+and typed.
+
+**3. Fail-fast before fail-slow.**
+`input_validator` runs first and short-circuits the graph via a
+conditional edge if the payload is missing fields or contains nonsensical
+values (negative deal value, discount outside 0 to 100%, etc.). This
+guarantees the agent never silently "approves" garbage input. A bad
+payload always resolves to an explicit `ERROR` status with actionable
+feedback, not a false positive.
+
+The result is a graph that mirrors how a real Deal Desk analyst reasons:
+is this request even well-formed, does it violate policy, what should the
+rep do about it, what is the final verdict. Each of those four questions
+is isolated in its own node.
+
+---
+
+## Architecture
+
+```
+                 ┌────────────────┐
+                 │ validate_input │  (fail-fast gate)
+                 └───────┬────────┘
+                         │
+              ┌──────────┴──────────┐
+        ERROR │                     │ PENDING
+              ▼                     ▼
+       ┌────────────┐      ┌────────────────┐
+       │  finalize   │◄─────│ check_policy   │
+       └────────────┘      └───────┬────────┘
+              ▲                     │
+              │            ┌────────▼─────────┐
+              └────────────│ generate_guidance │
+                           └───────────────────┘
+```
+
+| Node | Responsibility |
+|---|---|
+| `input_validator` | Schema and sanity check. Fail-fast on missing or invalid fields. |
+| `policy_checker` | Pure comparison against `POLICY_CONFIG`. Produces a `violations` list. |
+| `guidance_generator` | Converts violations into one actionable "Next Best Action" string. |
+| `finalizer` | Emits the strict JSON contract (`APPROVED`, `FLAGGED`, or `ERROR`). |
+
+---
+
+## Files
+
+| File | Purpose |
+|---|---|
+| `agent_workflow.py` | `POLICY_CONFIG`, `DealState`, all four nodes, graph assembly, and `run_deal()` / `run_deal_json()` entry points. |
+| `main.py` | Demo script (Pass, Fail, and malformed-input scenarios) and an optional CLI mode. |
+| `README.md` | This document. |
+
+---
+
+## Implementation Guide
+
+### Requirements
+
+```bash
+pip install langgraph langchain-core
+```
+
+### Run the demo
+
+```bash
+python main.py
+```
+
+This runs three scenarios end to end and prints strict JSON for each:
+
+1. **Pass**: 10% discount, 12-month term. Result: `APPROVED`
+2. **Fail**: 30% discount, 36-month term, missing multi-year add-ons. Result: `FLAGGED`
+3. **Error**: malformed payload (missing `discount_percent`). Result: `ERROR`, no policy evaluation attempted
+
+### Use it as a library
+
+```python
+from agent_workflow import run_deal
+
+result = run_deal({
+    "deal_id": "DEAL-2044",
+    "deal_value": 75000.00,
+    "discount_percent": 22.0,
+    "term_months": 24,
+    "addons": ["premium_support", "dedicated_csm"],
+})
+# result == {"status": "FLAGGED", ...}
+```
+
+### CLI mode
+
+```bash
+python main.py '{"deal_id": "D-1", "deal_value": 5000, "discount_percent": 15, "term_months": 6}'
+```
+
+### Output contract
+
+Every response, whether success, flag, or error, conforms to this shape,
+so a front end can render off `status` alone:
+
+```json
+{
+  "status": "APPROVED | FLAGGED | ERROR",
+  "deal_id": "string",
+  "deal_summary": { "deal_value": 0, "discount_percent": 0, "term_months": 0, "addons": [] },
+  "violations": ["string", "..."],
+  "next_best_action": "string"
+}
+```
+
+All guidance strings are written in plain ASCII punctuation (periods and
+colons, not em dashes), so the JSON serializes cleanly without `\u2014`
+escapes reaching the front end.
+
+---
+
+## Future Scalability
+
+This implementation is intentionally local and dependency-light so the
+graph topology can be validated before any infrastructure investment.
+The seams for production scale-out are already isolated:
+
+- **Live CPQ integration.** `input_validator` currently accepts a raw
+  dict. In production, this node would instead call the CPQ API
+  (Salesforce CPQ, DealHub, etc.) to pull the authoritative deal record.
+  That turns the agent into a real-time interceptor on the CPQ's own
+  submit event, rather than a standalone script.
+
+- **RAG-backed policy lookups.** `POLICY_CONFIG` is a static dictionary
+  today. As policy sprawls across regions, product lines, and fiscal
+  quarters, `policy_checker` would instead query a vector store (for
+  example, embeddings over Deal Desk's internal policy wiki) to retrieve
+  the currently applicable clause for a given deal's segment. That turns
+  hard-coded thresholds into a semantic lookup that stays current without
+  a code deploy.
+
+- **LLM-authored guidance.** `guidance_generator` currently concatenates
+  deterministic strings. Swapping in a `ChatAnthropic` call at this node,
+  and this node alone, per the decoupled design, would let the agent
+  generate context-aware, on-brand coaching language: for example, "you
+  are 3 points over the standard tier, but this account has 18 months of
+  expansion history, so consider requesting a targeted exception." Policy
+  evaluation logic stays untouched.
+
+- **Persistence and audit trail.** LangGraph's built-in checkpointer
+  (`MemorySaver`, or a Postgres/Redis-backed checkpointer in production)
+  would let every deal evaluation be replayed and audited, which matters
+  for SOX-adjacent revenue recognition review. It would also support
+  multi-turn flows where a rep iterates on a flagged deal and the agent
+  re-evaluates incrementally rather than from scratch.
+
+- **Service boundary.** `run_deal()` and `run_deal_json()` are already
+  the clean seam for wrapping this graph behind a FastAPI endpoint or a
+  serverless function, so a sales dashboard or CPQ webhook can call it
+  synchronously with sub-second latency.
