@@ -1,7 +1,7 @@
 """
 agent_workflow.py
 
-Q2C Policy Interceptor: Agentic Guardrail Engine
+Q2C Deal Reviewer: Agentic Guardrail Engine
 ====================================================
 
 Implements a LangGraph state machine that intercepts a deal payload before it
@@ -18,7 +18,24 @@ from __future__ import annotations
 import json
 from typing import Any, Literal, Optional, TypedDict
 
+import requests
 from langgraph.graph import StateGraph, END
+
+
+# ---------------------------------------------------------------------------
+# 1a. LOCAL LLM CONFIGURATION (Ollama)
+# ---------------------------------------------------------------------------
+# This is the seam the README's "LLM-authored guidance" future-scalability
+# note pointed at. It is intentionally isolated to a single node: the LLM
+# never sees POLICY_CONFIG and never touches the violations list before it
+# has already been computed deterministically. It can only add coaching
+# color on top of a decision that has already been made.
+
+OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_MODEL = "llama3.1:8b"
+
+#adjust here if model times out and does not return answers
+OLLAMA_TIMEOUT_SECONDS = 120
 
 
 # ---------------------------------------------------------------------------
@@ -66,6 +83,7 @@ class DealState(TypedDict, total=False):
     violations: list[str]
     validation_message: str
     next_best_action: str
+    llm_guidance: str
 
     # --- terminal output ---
     result: dict[str, Any]
@@ -204,6 +222,65 @@ def guidance_generator(state: DealState) -> DealState:
     return {**state, "next_best_action": action}
 
 
+def llm_guidance_node(state: DealState) -> DealState:
+    """Calls a local Ollama model to author a rep-facing coaching note.
+
+    This node runs strictly after policy_checker and guidance_generator,
+    and only ever reads their outputs (violations, next_best_action). It
+    cannot change the deal's status or violations list, so the underlying
+    decision remains fully deterministic and auditable; the LLM is only
+    adding tone and business framing on top of a verdict that has already
+    been reached.
+
+    Fails soft: if Ollama isn't running or the call errors out, the
+    deterministic next_best_action still stands on its own downstream, so
+    a rep is never blocked by an LLM outage.
+    """
+    violations = state.get("violations", [])
+    deal_id = state.get("deal_id", "unknown")
+
+    if violations:
+        violation_text = "\n".join(f"- {v}" for v in violations)
+    else:
+        violation_text = "None. The deal is fully within policy."
+
+    prompt = (
+        "You are a sales coach helping a rep understand a Quote-to-Cash "
+        "policy check result. Do not invent new numbers, thresholds, or "
+        "policy rules beyond what is given below. Do not contradict the "
+        "verdict. In 2-3 short sentences, explain the result in plain, "
+        "encouraging, direct language a rep could read in 10 seconds, and "
+        "suggest a next step. Use plain ASCII punctuation, no em dashes.\n\n"
+        f"Deal ID: {deal_id}\n"
+        f"Deal value: ${state.get('deal_value')}\n"
+        f"Discount requested: {state.get('discount_percent')}%\n"
+        f"Term: {state.get('term_months')} months\n"
+        f"Add-ons: {', '.join(state.get('addons', [])) or 'none'}\n"
+        f"Policy violations found:\n{violation_text}\n"
+        f"Deterministic next best action: {state.get('next_best_action', '')}\n"
+    )
+
+    try:
+        response = requests.post(
+            OLLAMA_URL,
+            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
+            timeout=OLLAMA_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        guidance = response.json().get("response", "").strip()
+        if not guidance:
+            guidance = "(LLM returned an empty response.)"
+    except requests.exceptions.RequestException as exc:
+        guidance = (
+            "LLM guidance unavailable: could not reach Ollama at "
+            f"{OLLAMA_URL} ({exc.__class__.__name__}). Is `ollama serve` "
+            "running with the model pulled? Falling back to the "
+            "deterministic next-best-action above."
+        )
+
+    return {**state, "llm_guidance": guidance}
+
+
 def finalizer(state: DealState) -> DealState:
     """Terminal node. Emits the strict JSON contract consumed by the
     front-end UI. This is the ONLY node allowed to set the final `result`
@@ -233,6 +310,7 @@ def finalizer(state: DealState) -> DealState:
         },
         "violations": violations,
         "next_best_action": state.get("next_best_action", ""),
+        "llm_guidance": state.get("llm_guidance", ""),
     }
     return {**state, "status": final_status, "result": result}
 
@@ -260,6 +338,7 @@ def build_graph():
     graph.add_node("validate_input", input_validator)
     graph.add_node("check_policy", policy_checker)
     graph.add_node("generate_guidance", guidance_generator)
+    graph.add_node("llm_guidance", llm_guidance_node)
     graph.add_node("finalize", finalizer)
 
     graph.set_entry_point("validate_input")
@@ -274,7 +353,8 @@ def build_graph():
     )
 
     graph.add_edge("check_policy", "generate_guidance")
-    graph.add_edge("generate_guidance", "finalize")
+    graph.add_edge("generate_guidance", "llm_guidance")
+    graph.add_edge("llm_guidance", "finalize")
     graph.add_edge("finalize", END)
 
     return graph.compile()

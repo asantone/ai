@@ -1,4 +1,4 @@
-# Q2C Policy Interceptor: Agentic Guardrails for High-Velocity Sales
+# Q2C Deal Reviewer: Agentic Guardrails for High-Velocity Sales
 
 A LangGraph-based agent that sits in the Quote-to-Cash path and validates
 deal parameters against business policy in real time, before a rep ever
@@ -63,7 +63,11 @@ is isolated in its own node.
        └────────────┘      └───────┬────────┘
               ▲                     │
               │            ┌────────▼─────────┐
-              └────────────│ generate_guidance │
+              │            │ generate_guidance │
+              │            └────────┬─────────┘
+              │                     │
+              │            ┌────────▼─────────┐
+              └────────────│  llm_guidance     │
                            └───────────────────┘
 ```
 
@@ -71,8 +75,16 @@ is isolated in its own node.
 |---|---|
 | `input_validator` | Schema and sanity check. Fail-fast on missing or invalid fields. |
 | `policy_checker` | Pure comparison against `POLICY_CONFIG`. Produces a `violations` list. |
-| `guidance_generator` | Converts violations into one actionable "Next Best Action" string. |
-| `finalizer` | Emits the strict JSON contract (`APPROVED`, `FLAGGED`, or `ERROR`). |
+| `guidance_generator` | Converts violations into one deterministic, actionable "Next Best Action" string. |
+| `llm_guidance` | Calls a local Ollama model (`llama3.1:8b`) to write a short, natural-language coaching note on top of the already-final decision. Never alters `status` or `violations`; fails soft if Ollama is unreachable. |
+| `finalizer` | Emits the strict JSON contract (`APPROVED`, `FLAGGED`, or `ERROR`), including both `next_best_action` and `llm_guidance`. |
+
+The LLM node runs strictly after the decision has been made. It cannot
+change whether a deal is `APPROVED`, `FLAGGED`, or `ERROR`, and it never
+sees `POLICY_CONFIG` directly. It only reasons over the violations list
+and the deterministic next-best-action, so the underlying policy math
+stays fully deterministic and auditable regardless of what the model
+says.
 
 ---
 
@@ -80,8 +92,10 @@ is isolated in its own node.
 
 | File | Purpose |
 |---|---|
-| `agent_workflow.py` | `POLICY_CONFIG`, `DealState`, all four nodes, graph assembly, and `run_deal()` / `run_deal_json()` entry points. |
-| `main.py` | Demo script (Pass, Fail, and malformed-input scenarios) and an optional CLI mode. |
+| `agent_workflow.py` | `POLICY_CONFIG`, `DealState`, all five nodes (including the local-LLM `llm_guidance` node), graph assembly, and `run_deal()` / `run_deal_json()` entry points. |
+| `q2c.py` | Terminal demo script (Pass, Fail, and malformed-input scenarios), printed as JSON. |
+| `streamlit_app.py` | Interactive front end. Lets a user set deal value, discount, term, and add-ons with a form and see the decision plus LLM coaching note live. |
+| `requirements.txt` | Python dependencies. |
 | `README.md` | This document. |
 
 ---
@@ -91,13 +105,35 @@ is isolated in its own node.
 ### Requirements
 
 ```bash
-pip install langgraph langchain-core
+pip install -r requirements.txt
 ```
 
-### Run the demo
+The `llm_guidance` node calls a local Ollama model, so Ollama must be
+running with the model pulled:
 
 ```bash
-python main.py
+ollama pull llama3.1:8b
+ollama serve
+```
+
+If Ollama isn't running, the app still works end to end: the
+deterministic decision and next-best-action are unaffected, and the LLM
+panel shows a clear fallback message instead of failing.
+
+### Run the interactive app
+
+```bash
+streamlit run streamlit_app.py
+```
+
+Set deal value, discount, term, and add-ons in the form and click
+"Check deal" to see the status, violations, deterministic next best
+action, and the LLM-authored coaching note.
+
+### Run the terminal demo
+
+```bash
+python q2c.py
 ```
 
 This runs three scenarios end to end and prints strict JSON for each:
@@ -121,12 +157,6 @@ result = run_deal({
 # result == {"status": "FLAGGED", ...}
 ```
 
-### CLI mode
-
-```bash
-python main.py '{"deal_id": "D-1", "deal_value": 5000, "discount_percent": 15, "term_months": 6}'
-```
-
 ### Output contract
 
 Every response, whether success, flag, or error, conforms to this shape,
@@ -138,7 +168,8 @@ so a front end can render off `status` alone:
   "deal_id": "string",
   "deal_summary": { "deal_value": 0, "discount_percent": 0, "term_months": 0, "addons": [] },
   "violations": ["string", "..."],
-  "next_best_action": "string"
+  "next_best_action": "string",
+  "llm_guidance": "string"
 }
 ```
 
@@ -168,13 +199,15 @@ The seams for production scale-out are already isolated:
   hard-coded thresholds into a semantic lookup that stays current without
   a code deploy.
 
-- **LLM-authored guidance.** `guidance_generator` currently concatenates
-  deterministic strings. Swapping in a `ChatAnthropic` call at this node,
-  and this node alone, per the decoupled design, would let the agent
-  generate context-aware, on-brand coaching language: for example, "you
-  are 3 points over the standard tier, but this account has 18 months of
-  expansion history, so consider requesting a targeted exception." Policy
-  evaluation logic stays untouched.
+- **LLM-authored guidance (implemented).** `llm_guidance_node` calls a
+  local Ollama model (`llama3.1:8b`) after the deterministic decision has
+  already been made, generating context-aware, on-brand coaching
+  language on top of the fixed `next_best_action` string. Because it
+  runs strictly downstream of `policy_checker`, it can add tone and
+  framing but can never change the verdict. Swapping the local Ollama
+  call for a hosted model (Anthropic, etc.) behind this same node is a
+  one-line change, and would be the natural next step for a
+  production deployment where a laptop-local model isn't available.
 
 - **Persistence and audit trail.** LangGraph's built-in checkpointer
   (`MemorySaver`, or a Postgres/Redis-backed checkpointer in production)

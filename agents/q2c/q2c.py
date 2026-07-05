@@ -1,17 +1,20 @@
 """
-main.py
+q2c.py
 
-Demo / CLI entry point for the Q2C Policy Interceptor.
+Demo entry point for the Q2C Deal Reviewer.
 
-Run directly to see the graph evaluate a "Pass" scenario and a "Fail"
-scenario back to back, or import `evaluate_deal` into another script /
-dashboard backend.
+Run directly to see the graph evaluate a "Pass" scenario, a "Fail"
+scenario, and a malformed-input scenario back to back, printing the full
+result -- including the deterministic decision and the local-LLM
+coaching note -- as JSON for each.
+
+For an interactive front end, use `streamlit run streamlit_app.py`
+instead. This script is just a quick sanity check from the terminal.
 """
 
 from __future__ import annotations
 
 import json
-import sys
 
 from agent_workflow import run_deal
 
@@ -71,25 +74,5 @@ def demo() -> None:
     print(json.dumps(result, indent=2))
 
 
-def _cli() -> None:
-    """Optional CLI mode: pass a JSON file path or a raw JSON string as
-    argv[1] to evaluate a custom deal, e.g.:
-
-        python main.py '{"deal_id": "D-1", "deal_value": 5000, \
-"discount_percent": 15, "term_months": 6}'
-    """
-    raw = sys.argv[1]
-    try:
-        deal = json.loads(raw)
-    except json.JSONDecodeError:
-        with open(raw, "r", encoding="utf-8") as f:
-            deal = json.load(f)
-
-    print(json.dumps(evaluate_deal(deal), indent=2))
-
-
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        _cli()
-    else:
-        demo()
+    demo()
